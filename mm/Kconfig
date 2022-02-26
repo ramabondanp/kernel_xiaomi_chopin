@@ -1,3 +1,4 @@
+
 config SELECT_MEMORY_MODEL
 	def_bool y
 	depends on ARCH_SELECT_MEMORY_MODEL
@@ -808,3 +809,12 @@ config PERCPU_STATS
 	  This feature collects and exposes statistics via debugfs. The
 	  information includes global and per chunk statistics, which can
 	  be used to help understand percpu memory usage.
+
+config LRU_GEN
+	bool "Multi-Gen LRU"
+	depends on MMU
+	# the following options can use up the spare bits in page flags
+	depends on !MAXSMP && (64BIT || !SPARSEMEM || SPARSEMEM_VMEMMAP)
+	help
+	  A high performance LRU implementation to overcommit memory.
+
