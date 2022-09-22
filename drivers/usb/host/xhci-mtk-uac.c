@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -240,12 +241,11 @@ void *mtk_usb_alloc_sram(unsigned int id, size_t size, dma_addr_t *dma)
 	if (xhci_sram[0].state != STATE_USE)
 		return NULL;
 
-	if (usb_audio_sram[id].state == STATE_USE) {
+	if (usb_audio_sram[id].state ==
+			STATE_USE) {
 		pr_info("%s state_use id=%d\n", __func__, id);
 		return NULL;
-
 	}
-
 	mtk_audio_request_sram(dma, (unsigned char **)&sram_virt_addr,
 					   size, &usb_audio_sram[id]);
 
@@ -254,7 +254,7 @@ void *mtk_usb_alloc_sram(unsigned int id, size_t size, dma_addr_t *dma)
 		usb_audio_sram[id].msram_phys_addr = *dma;
 		usb_audio_sram[id].msram_virt_addr =  sram_virt_addr;
 		usb_audio_sram[id].state = STATE_USE;
-		pr_debug("%s, id=%d\n", __func__, id);
+		pr_info("%s, id=%d\n", __func__, id);
 	} else {
 		usb_audio_sram[id].state = STATE_NOMEM;
 		pr_info("%s fail id=%d\n", __func__, id);
@@ -271,7 +271,7 @@ void mtk_usb_free_sram(unsigned int id)
 		usb_audio_sram[id].mlength = 0;
 		usb_audio_sram[id].msram_phys_addr = 0;
 		usb_audio_sram[id].msram_virt_addr =  NULL;
-		pr_debug("%s, id=%d\n", __func__, id);
+		pr_info("%s, id=%d\n", __func__, id);
 	} else {
 		pr_info("%s, fail id=%d\n", __func__, id);
 	}

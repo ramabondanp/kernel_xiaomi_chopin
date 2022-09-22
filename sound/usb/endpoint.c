@@ -142,12 +142,12 @@ int snd_usb_endpoint_implicit_feedback_sink(struct snd_usb_endpoint *ep)
 
 /*
  * For streaming based on information derived from sync endpoints,
- * prepare_outbound_urb_sizes() will call next_packet_size() to
+ * prepare_outbound_urb_sizes() will call slave_next_packet_size() to
  * determine the number of samples to be sent in the next packet.
  *
- * For implicit feedback, next_packet_size() is unused.
+ * For implicit feedback, slave_next_packet_size() is unused.
  */
-int snd_usb_endpoint_next_packet_size(struct snd_usb_endpoint *ep)
+int snd_usb_endpoint_slave_next_packet_size(struct snd_usb_endpoint *ep)
 {
 	unsigned long flags;
 	int ret;
@@ -160,6 +160,29 @@ int snd_usb_endpoint_next_packet_size(struct snd_usb_endpoint *ep)
 		+ (ep->freqm << ep->datainterval);
 	ret = min(ep->phase >> 16, ep->maxframesize);
 	spin_unlock_irqrestore(&ep->lock, flags);
+
+	return ret;
+}
+
+/*
+ * For adaptive and synchronous endpoints, prepare_outbound_urb_sizes()
+ * will call next_packet_size() to determine the number of samples to be
+ * sent in the next packet.
+ */
+int snd_usb_endpoint_next_packet_size(struct snd_usb_endpoint *ep)
+{
+	int ret;
+
+	if (ep->fill_max)
+		return ep->maxframesize;
+
+	ep->sample_accum += ep->sample_rem;
+	if (ep->sample_accum >= ep->fps) {
+		ep->sample_accum -= ep->fps;
+		ret = ep->framesize[1];
+	} else {
+		ret = ep->framesize[0];
+	}
 
 	return ret;
 }
@@ -208,6 +231,8 @@ static void prepare_silent_urb(struct snd_usb_endpoint *ep,
 
 		if (ctx->packet_size[i])
 			counts = ctx->packet_size[i];
+		else if (ep->sync_master)
+			counts = snd_usb_endpoint_slave_next_packet_size(ep);
 		else
 			counts = snd_usb_endpoint_next_packet_size(ep);
 
@@ -621,8 +646,9 @@ static void release_urbs(struct snd_usb_endpoint *ep, int force)
 
 	for (i = 0; i < ep->nurbs; i++)
 		release_urb_ctx(&ep->urb[i]);
-
+        pr_info("%s enter\n", __func__);
 	if (ep->databuf && ep->databuf_sram) {
+		 pr_info("%s  release pipein or out\n", __func__);
 		if (usb_pipein(ep->pipe))
 			mtk_usb_free_sram(USB_AUDIO_DATA_IN);
 		else
@@ -630,8 +656,10 @@ static void release_urbs(struct snd_usb_endpoint *ep, int force)
 	}
 
 	if (ep->syncbuf) {
-		if (ep->syncbuf_sram)
+		if (ep->syncbuf_sram){
+			pr_info("%s release sync\n", __func__);
 			mtk_usb_free_sram(USB_AUDIO_DATA_SYNC);
+		}
 		else
 			usb_free_coherent(ep->chip->dev, SYNC_URBS * 4,
 				       ep->syncbuf, ep->sync_dma);
@@ -981,10 +1009,17 @@ int snd_usb_endpoint_set_params(struct snd_usb_endpoint *ep,
 	ep->maxpacksize = fmt->maxpacksize;
 	ep->fill_max = !!(fmt->attributes & UAC_EP_CS_ATTR_FILL_MAX);
 
-	if (snd_usb_get_speed(ep->chip->dev) == USB_SPEED_FULL)
+	if (snd_usb_get_speed(ep->chip->dev) == USB_SPEED_FULL) {
 		ep->freqn = get_usb_full_speed_rate(rate);
-	else
+		ep->fps = 1000;
+	} else {
 		ep->freqn = get_usb_high_speed_rate(rate);
+		ep->fps = 8000;
+	}
+
+	ep->sample_rem = rate % ep->fps;
+	ep->framesize[0] = rate / ep->fps;
+	ep->framesize[1] = (rate + (ep->fps - 1)) / ep->fps;
 
 	/* calculate the frequency in 16.16 format */
 	ep->freqm = ep->freqn;
@@ -1043,6 +1078,7 @@ int snd_usb_endpoint_start(struct snd_usb_endpoint *ep)
 	ep->active_mask = 0;
 	ep->unlink_mask = 0;
 	ep->phase = 0;
+	ep->sample_accum = 0;
 
 	snd_usb_endpoint_start_quirk(ep);
 

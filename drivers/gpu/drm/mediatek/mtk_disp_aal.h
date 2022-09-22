@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -150,6 +151,7 @@ void disp_aal_set_lcm_type(unsigned int panel_type);
 void disp_aal_set_ess_level(int level);
 void disp_aal_set_ess_en(int enable);
 void disp_aal_set_dre_en(int enable);
+void disp_aal_set_bypass(struct drm_crtc *crtc, int bypass);
 
 int mtk_drm_ioctl_aal_eventctl(struct drm_device *dev, void *data,
 	struct drm_file *file_priv);
@@ -162,6 +164,8 @@ int mtk_drm_ioctl_aal_init_dre30(struct drm_device *dev, void *data,
 int mtk_drm_ioctl_aal_get_size(struct drm_device *dev, void *data,
 	struct drm_file *file_priv);
 int mtk_drm_ioctl_aal_set_param(struct drm_device *dev, void *data,
+	struct drm_file *file_priv);
+int mtk_drm_ioctl_bypass_aal(struct drm_device *dev, void *data,
 	struct drm_file *file_priv);
 
 #endif

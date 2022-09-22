@@ -15,6 +15,7 @@ ccflags-y += -I$(srctree)/drivers/power/supply/mediatek/misc/
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/typec/tcpc/
 subdir-ccflags-$(CONFIG_MTK_USB_TYPEC_U3_MUX) += -I$(srctree)/drivers/misc/mediatek/typec/u3_switch/
 subdir-ccflags-$(CONFIG_MTK_USB_TYPEC_U3_MUX) += -I$(srctree)/drivers/misc/mediatek/typec/inc
+
 obj-y += extcon_usb.o boost_manager.o
 obj-$(CONFIG_MTK_USB_IDDIG) += usb-iddig.o
 obj-$(CONFIG_TCPC_CLASS) += usb-tcpc.o

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2015 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -124,6 +125,17 @@ extern long DW9800WAF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
 				unsigned long a_u4Param);
 extern int DW9800WAF_Release(struct inode *a_pstInode, struct file *a_pstFile);
 
+
+#define DW9800VAF_SetI2Cclient DW9800VAF_SetI2Cclient_Main2
+#define DW9800VAF_Ioctl DW9800VAF_Ioctl_Main2
+#define DW9800VAF_Release DW9800VAF_Release_Main2
+#define DW9800VAF_GetFileName DW9800VAF_GetFileName_Main2
+extern int DW9800VAF_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+				 spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long DW9800VAF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
+			   unsigned long a_u4Param);
+extern int DW9800VAF_Release(struct inode *a_pstInode, struct file *a_pstFile);
+extern int DW9800VAF_GetFileName(unsigned char *pFileName);
 #define LC898217AFC_SetI2Cclient LC898217AFC_SetI2Cclient_Main2
 #define LC898217AFC_Ioctl LC898217AFC_Ioctl_Main2
 #define LC898217AFC_Release LC898217AFC_Release_Main2

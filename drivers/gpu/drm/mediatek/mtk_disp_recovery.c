@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -16,6 +17,7 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
+#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/kthread.h>
 #include <linux/types.h>
@@ -26,6 +28,7 @@
 #include <drm/drmP.h>
 #include <linux/soc/mediatek/mtk-cmdq.h>
 
+#include "../../../../kernel/irq/internals.h"
 #include "mtk_drm_drv.h"
 #include "mtk_drm_ddp_comp.h"
 #include "mtk_drm_crtc.h"
@@ -37,6 +40,15 @@
 
 #define ESD_TRY_CNT 5
 #define ESD_CHECK_PERIOD 2000 /* ms */
+
+#ifdef CONFIG_MI_ESD_CHECK
+#define ESD_CHECK_IRQ_PERIOD 10 /* ms */
+#ifndef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+static irqreturn_t _mi_esd_check_ext_te_irq_handler(int irq, void *data);
+#else
+static irqreturn_t _mi_esd_check_err_flag_irq_handler(int irq, void *data);
+#endif
+#endif
 
 /* pinctrl implementation */
 long _set_state(struct drm_crtc *crtc, const char *name)
@@ -200,10 +212,15 @@ int _mtk_esd_check_read(struct drm_crtc *crtc)
 		cmdq_pkt_clear_event(cmdq_handle,
 				     mtk_crtc->gce_obj.event[EVENT_ESD_EOF]);
 
+#ifdef CONFIG_MI_ESD_CHECK
+#ifdef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+		mtk_ddp_comp_io_cmd(output_comp, NULL, MI_ESD_CHECK_READ, NULL);
+#endif
+#else
 		mtk_ddp_comp_io_cmd(output_comp, cmdq_handle, ESD_CHECK_READ,
 				    (void *)mtk_crtc->gce_obj.buf.pa_base +
 					    DISP_SLOT_ESD_READ_BASE);
-
+#endif
 		cmdq_pkt_set_event(cmdq_handle,
 				   mtk_crtc->gce_obj.event[EVENT_ESD_EOF]);
 	} else { /* VDO mode */
@@ -259,14 +276,22 @@ int _mtk_esd_check_read(struct drm_crtc *crtc)
 		goto done;
 	}
 
+#ifdef CONFIG_MI_ESD_CHECK
+#ifdef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+	ret = mtk_ddp_comp_io_cmd(output_comp, NULL, MI_ESD_CHECK_CMP, NULL);
+#endif
+#else
 	ret = mtk_ddp_comp_io_cmd(output_comp, NULL, ESD_CHECK_CMP,
 				  (void *)mtk_crtc->gce_obj.buf.va_base +
 					  DISP_SLOT_ESD_READ_BASE);
+#endif
+
 done:
 	cmdq_pkt_destroy(cmdq_handle);
 	return ret;
 }
 
+#ifndef CONFIG_MI_ESD_CHECK
 static irqreturn_t _esd_check_ext_te_irq_handler(int irq, void *data)
 {
 	struct mtk_drm_esd_ctx *esd_ctx = (struct mtk_drm_esd_ctx *)data;
@@ -276,6 +301,7 @@ static irqreturn_t _esd_check_ext_te_irq_handler(int irq, void *data)
 
 	return IRQ_HANDLED;
 }
+#endif
 
 static int _mtk_esd_check_eint(struct drm_crtc *crtc)
 {
@@ -341,15 +367,25 @@ static int mtk_drm_request_eint(struct drm_crtc *crtc)
 
 	of_property_read_u32_array(node, "debounce", ints, ARRAY_SIZE(ints));
 	esd_ctx->eint_irq = irq_of_parse_and_map(node, 0);
-
+#ifdef CONFIG_MI_ESD_CHECK
+#ifndef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+	ret = request_irq(esd_ctx->eint_irq, _mi_esd_check_ext_te_irq_handler,
+			  IRQF_TRIGGER_FALLING, "ESD_TE-eint", esd_ctx);
+	if (ret) {
+		DDPPR_ERR("eint irq line not available!\n");
+		return ret;
+	}
+#endif
+#else
 	ret = request_irq(esd_ctx->eint_irq, _esd_check_ext_te_irq_handler,
-			  IRQF_TRIGGER_RISING, "ESD_TE-eint", esd_ctx);
+			IRQF_TRIGGER_RISING, "ESD_TE-eint", esd_ctx);
 	if (ret) {
 		DDPPR_ERR("eint irq line not available!\n");
 		return ret;
 	}
 
 	disable_irq(esd_ctx->eint_irq);
+#endif
 
 	_set_state(crtc, "mode_te_te");
 
@@ -400,11 +436,19 @@ done:
 	return ret;
 }
 
+static atomic_t panel_dead;
+int get_panel_dead_flag(void) {
+	return atomic_read(&panel_dead);
+}
+EXPORT_SYMBOL(get_panel_dead_flag);
+
 static int mtk_drm_esd_recover(struct drm_crtc *crtc)
 {
 	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
 	struct mtk_ddp_comp *output_comp;
 	int ret = 0;
+
+	atomic_set(&panel_dead, 1);
 
 	CRTC_MMP_EVENT_START(drm_crtc_index(crtc), esd_recovery, 0, 0);
 	if (crtc->state && !crtc->state->active) {
@@ -432,13 +476,18 @@ static int mtk_drm_esd_recover(struct drm_crtc *crtc)
 			mtk_crtc->qos_ctx->last_hrt_req);
 #endif
 
+#if defined(CONFIG_DRM_PANEL_K10A_36_02_0A_DSC_VDO) || defined(CONFIG_DRM_PANEL_K10A_42_02_0B_DSC_VDO)
+	mdelay(150);
+#endif
 	mtk_drm_crtc_enable(crtc);
 	CRTC_MMP_MARK(drm_crtc_index(crtc), esd_recovery, 0, 3);
 
 	mtk_ddp_comp_io_cmd(output_comp, NULL, CONNECTOR_PANEL_ENABLE, NULL);
 
 	CRTC_MMP_MARK(drm_crtc_index(crtc), esd_recovery, 0, 4);
-
+#ifdef CONFIG_MI_ESD_CHECK
+	mtk_ddp_comp_io_cmd(output_comp, NULL, ESD_RESTORE_BACKLIGHT, NULL);
+#endif
 	mtk_crtc_hw_block_ready(crtc);
 	if (mtk_crtc_is_frame_trigger_mode(crtc)) {
 		struct cmdq_pkt *cmdq_handle;
@@ -460,10 +509,235 @@ static int mtk_drm_esd_recover(struct drm_crtc *crtc)
 	CRTC_MMP_MARK(drm_crtc_index(crtc), esd_recovery, 0, 5);
 
 done:
+	atomic_set(&panel_dead, 0);
 	CRTC_MMP_EVENT_END(drm_crtc_index(crtc), esd_recovery, 0, ret);
 
 	return 0;
 }
+
+#ifdef CONFIG_MI_ESD_CHECK
+#ifndef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+struct mtk_drm_esd_ctx *g_esd_ctx;
+EXPORT_SYMBOL(g_esd_ctx);
+
+static irqreturn_t _mi_esd_check_ext_te_irq_handler(int irq, void *data)
+{
+	struct mtk_drm_esd_ctx *esd_ctx = (struct mtk_drm_esd_ctx *)data;
+
+	if (esd_ctx->panel_init) {
+		atomic_set(&esd_ctx->ext_te_event, 1);
+		wake_up_interruptible(&esd_ctx->ext_te_wq);
+		pr_info("[ESD]_esd_check_ext_te_irq_handler is comming\n");
+	}
+	else {
+		pr_info("[ESD]_esd_check_ext_te_irq_handler is comming, but ignore\n");
+	}
+	return IRQ_HANDLED;
+}
+
+static int mi_mtk_drm_esd_check_worker_kthread(void *data)
+{
+    struct sched_param param = { .sched_priority = 87 };
+	struct drm_crtc *crtc = (struct drm_crtc *)data;
+	struct mtk_drm_private *private = crtc->dev->dev_private;
+	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
+	struct mtk_drm_esd_ctx *esd_ctx = mtk_crtc->esd_ctx;
+	int ret = 0;
+
+	g_esd_ctx = esd_ctx;
+	sched_setscheduler(current, SCHED_RR, &param);
+	pr_info("start ESD thread\n");
+	while (1) {
+		msleep(ESD_CHECK_IRQ_PERIOD); /* 10ms */
+		ret = wait_event_interruptible(esd_ctx->ext_te_wq,
+		atomic_read(&esd_ctx->ext_te_event));
+		if (ret < 0) {
+			DDPINFO("[ESD]check thread waked up accidently\n");
+			continue;
+		}
+
+		pr_info("ESD waked up\n");
+		mutex_lock(&private->commit.lock);
+		DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
+
+		/* 1.esd recovery */
+		mtk_drm_esd_recover(crtc);
+
+		/* 2.clear atomic  ext_te_event */
+		atomic_set(&esd_ctx->ext_te_event, 0);
+
+		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+		mutex_unlock(&private->commit.lock);
+		pr_info("[ESD]check thread is over\n");
+
+		/* 3.other check & recovery */
+		if (kthread_should_stop())
+			break;
+	}
+	return 0;
+}
+#else
+static int mtk_drm_request_err_flag(struct drm_crtc *crtc)
+{
+	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
+	struct mtk_panel_ext *panel_ext;
+	struct mi_esd_ctx *mi_esd_ctx = mtk_crtc->mi_esd_ctx;
+
+	int ret = 0;
+	if (unlikely(!mi_esd_ctx)) {
+		DDPPR_ERR("%s:invalid ESD context\n", __func__);
+		return -EINVAL;
+	}
+
+	panel_ext = mtk_crtc->panel_ext;
+
+	mi_esd_ctx->err_flag_irq_gpio = panel_ext->params->err_flag_irq_gpio;
+	mi_esd_ctx->err_flag_irq_flags = panel_ext->params->err_flag_irq_flags;
+
+	if (gpio_is_valid(mi_esd_ctx->err_flag_irq_gpio)) {
+		mi_esd_ctx->err_flag_irq = gpio_to_irq(mi_esd_ctx->err_flag_irq_gpio);
+		ret = gpio_request(mi_esd_ctx->err_flag_irq_gpio, "esd_err_irq_gpio");
+		if (ret)
+			DDPPR_ERR("Failed to request esd irq gpio %d, ret=%d\n",
+				mi_esd_ctx->err_flag_irq_gpio, ret);
+		else
+			gpio_direction_input(mi_esd_ctx->err_flag_irq_gpio);
+	} else {
+		DDPPR_ERR("err_flag_irq_gpio is invalid\n");
+		ret = -EINVAL;
+	}
+
+	if (mi_esd_ctx->err_flag_irq_gpio > 0) {
+		ret = request_threaded_irq(mi_esd_ctx->err_flag_irq,
+			NULL, _mi_esd_check_err_flag_irq_handler,
+			mi_esd_ctx->err_flag_irq_flags,
+			"esd_err_irq", mi_esd_ctx);
+		if (ret) {
+			DDPPR_ERR("display register esd irq failed\n");
+		} else {
+			DDPPR_ERR("display register esd irq success\n");
+			disable_irq(mi_esd_ctx->err_flag_irq);
+		}
+	}
+	_set_state(crtc, "err_flag_init");
+	return ret;
+}
+
+static irqreturn_t _mi_esd_check_err_flag_irq_handler(int irq, void *data)
+{
+	struct mi_esd_ctx *mi_esd_ctx = (struct mi_esd_ctx *)data;
+	if (mi_esd_ctx->panel_init) {
+		atomic_set(&mi_esd_ctx->err_flag_event, 1);
+		wake_up_interruptible(&mi_esd_ctx->err_flag_wq);
+		pr_info("[ESD]_esd_check_err_flag_irq_handler is comming\n");
+	}
+	else {
+		pr_info("[ESD]_esd_check_err_flag_irq_handler is comming, but ignore\n");
+	}
+	return IRQ_HANDLED;
+}
+static int mi_esd_err_flag_irq_check_worker_kthread(void *data)
+{
+    struct sched_param param = { .sched_priority = 87 };
+	struct drm_crtc *crtc = (struct drm_crtc *)data;
+	struct mtk_drm_private *private = crtc->dev->dev_private;
+	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
+	struct mi_esd_ctx *mi_esd_ctx = mtk_crtc->mi_esd_ctx;
+	int ret = 0;
+	sched_setscheduler(current, SCHED_RR, &param);
+	pr_info("start ESD thread\n");
+	while (1) {
+		msleep(ESD_CHECK_IRQ_PERIOD); /* 10ms */
+		ret = wait_event_interruptible(mi_esd_ctx->err_flag_wq,
+		atomic_read(&mi_esd_ctx->err_flag_event));
+		if (ret < 0) {
+			DDPINFO("[ESD]check thread waked up accidently\n");
+			continue;
+		}
+		pr_info("ESD waked up\n");
+		DDPINFO("[ESD]check thread waked up successfully\n");
+		mutex_lock(&private->commit.lock);
+		DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
+		/* 1.esd recovery */
+		mtk_drm_esd_recover(crtc);
+		/* 2.clear atomic  ext_te_event */
+		atomic_set(&mi_esd_ctx->err_flag_event, 0);
+		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+		mutex_unlock(&private->commit.lock);
+		pr_info("[ESD]check thread is over\n");
+		/* 3.other check & recovery */
+		if (kthread_should_stop())
+			break;
+	}
+	return 0;
+}
+
+static void mtk_drm_esd_err_flag_irq_init(struct mi_esd_ctx *mi_esd_ctx, struct drm_crtc *crtc)
+{
+	mi_esd_ctx->disp_esd_irq_chk_task = kthread_create(
+		mi_esd_err_flag_irq_check_worker_kthread, crtc, "err_flag_chk");
+	init_waitqueue_head(&mi_esd_ctx->err_flag_wq);
+	atomic_set(&mi_esd_ctx->err_flag_event, 0);
+	wake_up_process(mi_esd_ctx->disp_esd_irq_chk_task);
+}
+
+int mtk_drm_esd_irq_ctrl(struct mi_esd_ctx *mi_esd_ctx,
+				bool enable)
+{
+	struct irq_desc *desc;
+	if (gpio_is_valid(mi_esd_ctx->err_flag_irq_gpio)) {
+		if (mi_esd_ctx->err_flag_irq) {
+			if (enable) {
+				if (!mi_esd_ctx->err_flag_enabled) {
+					desc = irq_to_desc(mi_esd_ctx->err_flag_irq);
+					if (!irq_settings_is_level(desc)) {
+						pr_info("clear pending esd irq\n");
+						desc->istate &= ~IRQS_PENDING;
+					}
+					enable_irq_wake(mi_esd_ctx->err_flag_irq);
+					enable_irq(mi_esd_ctx->err_flag_irq);
+					mi_esd_ctx->err_flag_enabled = true;
+					pr_info("panel esd irq is enable\n");
+				}
+			} else {
+				if (mi_esd_ctx->err_flag_enabled) {
+					disable_irq_wake(mi_esd_ctx->err_flag_irq);
+					disable_irq_nosync(mi_esd_ctx->err_flag_irq);
+					mi_esd_ctx->err_flag_enabled = false;
+					pr_info("panel esd irq is disable\n");
+				}
+			}
+		}
+	} else {
+		pr_info("panel esd irq gpio invalid\n");
+	}
+	return 0;
+}
+
+void mi_disp_err_flag_esd_check_switch(struct drm_crtc *crtc, bool enable)
+{
+	struct mtk_drm_private *priv = crtc->dev->dev_private;
+	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
+	struct mi_esd_ctx *mi_esd_ctx = mtk_crtc->mi_esd_ctx;
+
+	if (!mtk_drm_helper_get_opt(priv->helper_opt,
+					   MTK_DRM_OPT_ESD_CHECK_RECOVERY))
+		return;
+
+	if (unlikely(!mi_esd_ctx)) {
+		DDPINFO("%s:invalid ESD context, crtc id:%d\n",
+			__func__, drm_crtc_index(crtc));
+		return;
+	}
+
+	if (enable) {
+		mtk_drm_esd_irq_ctrl(mi_esd_ctx, true);
+	} else {
+		mtk_drm_esd_irq_ctrl(mi_esd_ctx, false);
+	}
+}
+#endif
+#endif
 
 static int mtk_drm_esd_check_worker_kthread(void *data)
 {
@@ -576,13 +850,16 @@ static void mtk_disp_esd_chk_deinit(struct drm_crtc *crtc)
 		DDPPR_ERR("%s:invalid ESD context\n", __func__);
 		return;
 	}
-
+#if !defined(CONFIG_MI_ESD_CHECK) || defined(CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD)
 	/* Stop ESD task */
 	mtk_disp_esd_check_switch(crtc, false);
 
 	/* Stop ESD kthread */
 	kthread_stop(esd_ctx->disp_esd_chk_task);
-
+#else
+	/* Stop MI ESD kthread */
+	kthread_stop(esd_ctx->mi_disp_esd_chk_task);
+#endif
 	kfree(esd_ctx);
 }
 
@@ -591,15 +868,38 @@ static void mtk_disp_esd_chk_init(struct drm_crtc *crtc)
 	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
 	struct mtk_panel_ext *panel_ext;
 	struct mtk_drm_esd_ctx *esd_ctx;
-
+#ifdef CONFIG_MI_ESD_CHECK
+#ifdef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+	struct mi_esd_ctx *mi_esd_ctx;
+#endif
+#endif
 	panel_ext = mtk_crtc->panel_ext;
 	if (!(panel_ext && panel_ext->params)) {
 		DDPMSG("can't find panel_ext handle\n");
 		return;
 	}
 
-	if (_lcm_need_esd_check(panel_ext) == 0)
+#ifdef CONFIG_MI_ESD_CHECK
+#ifdef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
+	mi_esd_ctx = kzalloc(sizeof(*mi_esd_ctx), GFP_KERNEL);
+	if (!mi_esd_ctx) {
+		DDPPR_ERR("allocate MI ESD context failed!\n");
 		return;
+	}
+	mtk_crtc->mi_esd_ctx = mi_esd_ctx;
+
+	if(!mtk_drm_request_err_flag(crtc)) {
+		mtk_drm_esd_err_flag_irq_init(mi_esd_ctx, crtc);
+	} else {
+		DDPPR_ERR("mi esd err flag gpio request failed\n");
+		kfree(mtk_crtc->mi_esd_ctx);
+	}
+#endif
+#endif
+
+	if (_lcm_need_esd_check(panel_ext) == 0) {
+		return;
+	}
 
 	DDPINFO("create ESD thread\n");
 	/* primary display check thread init */
@@ -624,7 +924,16 @@ static void mtk_disp_esd_chk_init(struct drm_crtc *crtc)
 		esd_ctx->chk_mode = READ_EINT;
 	mtk_drm_request_eint(crtc);
 
+#ifdef CONFIG_MI_ESD_CHECK
+#ifdef CONFIG_DRM_PANEL_K10_42_02_0A_DSC_CMD
 	wake_up_process(esd_ctx->disp_esd_chk_task);
+#else
+	esd_ctx->mi_disp_esd_chk_task = kthread_create(
+		mi_mtk_drm_esd_check_worker_kthread, crtc, "mi_disp_echk");
+
+	wake_up_process(esd_ctx->mi_disp_esd_chk_task);
+#endif
+#endif
 }
 
 void mtk_disp_chk_recover_deinit(struct drm_crtc *crtc)

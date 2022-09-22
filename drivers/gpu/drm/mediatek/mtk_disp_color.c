@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -3160,9 +3161,9 @@ static int mtk_color_user_cmd(struct mtk_ddp_comp *comp,
 struct color_backup {
 	unsigned int COLOR_CFG_MAIN;
 };
-static struct color_backup g_color_backup;
+//static struct color_backup g_color_backup;
 
-static void ddp_color_backup(struct mtk_ddp_comp *comp)
+/* static void ddp_color_backup(struct mtk_ddp_comp *comp)
 {
 	g_color_backup.COLOR_CFG_MAIN =
 		readl(comp->regs + DISP_COLOR_CFG_MAIN);
@@ -3171,7 +3172,7 @@ static void ddp_color_backup(struct mtk_ddp_comp *comp)
 static void ddp_color_restore(struct mtk_ddp_comp *comp)
 {
 	writel(g_color_backup.COLOR_CFG_MAIN, comp->regs + DISP_COLOR_CFG_MAIN);
-}
+} */
 
 static void mtk_color_prepare(struct mtk_ddp_comp *comp)
 {
@@ -3201,7 +3202,7 @@ static void mtk_color_prepare(struct mtk_ddp_comp *comp)
 #endif
 #endif
 	// restore DISP_COLOR_CFG_MAIN register
-	ddp_color_restore(comp);
+	//ddp_color_restore(comp);
 }
 
 static void mtk_color_unprepare(struct mtk_ddp_comp *comp)
@@ -3215,7 +3216,7 @@ static void mtk_color_unprepare(struct mtk_ddp_comp *comp)
 	spin_unlock_irqrestore(&g_color_clock_lock, flags);
 	DDPINFO("%s @ %d......... spin_unlock_irqrestore ", __func__, __LINE__);
 	// backup DISP_COLOR_CFG_MAIN register
-	ddp_color_backup(comp);
+	//ddp_color_backup(comp);
 	mtk_ddp_comp_clk_unprepare(comp);
 }
 

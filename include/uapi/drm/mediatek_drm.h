@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -121,9 +122,9 @@ struct drm_mtk_session {
 #define THSHP_TUNING_INDEX 12
 #define THSHP_PARAM_MAX 146 /* TDSHP_3_0 */
 #define PARTIAL_Y_INDEX 10
-#define GLOBAL_SAT_SIZE 10
-#define CONTRAST_SIZE 10
-#define BRIGHTNESS_SIZE 10
+#define GLOBAL_SAT_SIZE 101
+#define CONTRAST_SIZE 201
+#define BRIGHTNESS_SIZE 511
 #define PARTIAL_Y_SIZE 16
 #define PQ_HUE_ADJ_PHASE_CNT 4
 #define PQ_SAT_ADJ_PHASE_CNT 4
@@ -411,6 +412,7 @@ struct DISP_PQ_PARAM {
 #define DRM_MTK_CRTC_GETSFFENCE         0x0D
 
 /* PQ */
+#define DRM_MTK_BYPASS_AAL   0x1E
 #define DRM_MTK_SET_CCORR			0x20
 #define DRM_MTK_CCORR_EVENTCTL   0x21
 #define DRM_MTK_CCORR_GET_IRQ    0x22
@@ -673,6 +675,9 @@ struct DRM_DISP_WRITE_REG {
 
 #define DRM_IOCTL_MTK_SEC_HND_TO_GEM_HND     DRM_IOWR(DRM_COMMAND_BASE + \
 		DRM_MTK_SEC_HND_TO_GEM_HND, struct drm_mtk_sec_gem_hnd)
+
+#define DRM_IOCTL_MTK_BYPASS_AAL    DRM_IOWR(DRM_COMMAND_BASE + \
+		DRM_MTK_BYPASS_AAL, unsigned int)
 
 #define DRM_IOCTL_MTK_SET_CCORR     DRM_IOWR(DRM_COMMAND_BASE + \
 		DRM_MTK_SET_CCORR, struct DRM_DISP_CCORR_COEF_T)

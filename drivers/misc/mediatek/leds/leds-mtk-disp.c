@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2018 MediaTek Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  */
 
@@ -74,6 +75,7 @@ struct mtk_leds_info {
 static DEFINE_MUTEX(leds_mutex);
 struct leds_desp_info *leds_info;
 static BLOCKING_NOTIFIER_HEAD(mtk_leds_chain_head);
+static int lcd_brightness;
 
 int mtk_leds_register_notifier(struct notifier_block *nb)
 {
@@ -248,6 +250,12 @@ int mt_leds_brightness_set(char *name, int level)
 }
 EXPORT_SYMBOL(mt_leds_brightness_set);
 
+int mt_leds_brightness_get(void)
+{
+	return lcd_brightness;
+}
+EXPORT_SYMBOL(mt_leds_brightness_get);
+
 static int led_level_set(struct led_classdev *led_cdev,
 					  enum led_brightness brightness)
 {
@@ -257,7 +265,7 @@ static int led_level_set(struct led_classdev *led_cdev,
 		container_of(led_cdev, struct led_conf_info, cdev);
 	struct mtk_led_data *led_dat =
 		container_of(led_conf, struct mtk_led_data, conf);
-
+	pr_info("backlight = %d, last backlight = %d", brightness, led_dat->brightness);
 	if (led_dat->brightness == brightness)
 		return 0;
 
@@ -273,7 +281,9 @@ static int led_level_set(struct led_classdev *led_cdev,
 		output_met_backlight_tag(brightness);
 #endif
 
-led_dat->brightness = brightness;
+	led_dat->brightness = brightness;
+	lcd_brightness = brightness;
+
 #ifdef CONFIG_LEDS_BRIGHTNESS_CHANGED
 	call_notifier(1, led_dat);
 #endif
@@ -283,6 +293,8 @@ led_dat->brightness = brightness;
 	led_level_disp_set(led_dat, brightness);
 	led_dat->last_level = brightness;
 #endif
+
+	sysfs_notify(&led_cdev->dev->kobj, NULL, "brightness");
 	return 0;
 
 }
